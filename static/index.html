@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sorbonne Université (Jussieu) — Multimodal Transport Heatmap</title>
+  <link rel="stylesheet" href="/static/vendor/leaflet.css">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div id="app-shell">
+    <aside id="sidebar" aria-label="Transport Controls and Inspector">
+      <header class="brand-header">
+        <div class="brand-badge">SU</div>
+        <div class="brand-text">
+          <h1>Sorbonne Transport Heatmap</h1>
+          <p class="origin-sub">Campus Pierre et Marie Curie · 7-9 quai Saint Bernard, 75005 Paris</p>
+        </div>
+      </header>
+
+      <div class="quick-actions">
+        <button id="btn-center-origin" type="button" class="btn-secondary">
+          Center on Jussieu
+        </button>
+        <button id="btn-methodology" type="button" class="btn-secondary">
+          Methodology
+        </button>
+      </div>
+
+      <section class="panel-section">
+        <h2 class="section-title">Transport Mode</h2>
+        <div class="mode-grid" id="mode-buttons" role="group" aria-label="Transport Mode">
+          <button type="button" class="mode-btn active" data-mode="transit">
+            <span class="mode-dot mode-dot-transit"></span>
+            <span class="mode-meta">
+              <strong>Public Services</strong>
+              <small>Métro · RER · Tram · Bus</small>
+            </span>
+          </button>
+          <button type="button" class="mode-btn" data-mode="walk">
+            <span class="mode-dot mode-dot-walk"></span>
+            <span class="mode-meta">
+              <strong>Pedestrian</strong>
+              <small>4.8 km/h walking</small>
+            </span>
+          </button>
+          <button type="button" class="mode-btn" data-mode="bike">
+            <span class="mode-dot mode-dot-bike"></span>
+            <span class="mode-meta">
+              <strong>Bicycle</strong>
+              <small>Cycleways &amp; streets</small>
+            </span>
+          </button>
+          <button type="button" class="mode-btn" data-mode="best">
+            <span class="mode-dot mode-dot-best"></span>
+            <span class="mode-meta">
+              <strong>Fastest Overall</strong>
+              <small>Best across all modes</small>
+            </span>
+          </button>
+          <button type="button" class="mode-btn mode-btn-wide" data-mode="winner">
+            <span class="mode-dot mode-dot-winner"></span>
+            <span class="mode-meta">
+              <strong>Mode Winner Map</strong>
+              <small>Where Walk vs. Bike vs. Transit is fastest</small>
+            </span>
+          </button>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <h2 class="section-title">Map Layers</h2>
+        <div class="toggle-list">
+          <label class="toggle-row">
+            <input type="checkbox" id="toggle-heatmap" checked>
+            <span>Smooth Interpolated Heatmap</span>
+          </label>
+          <label class="toggle-row">
+            <input type="checkbox" id="toggle-isochrones" checked>
+            <span>Isochrone Contours (5–60 min)</span>
+          </label>
+          <label class="toggle-row">
+            <input type="checkbox" id="toggle-stations" checked>
+            <span>Rail Stations (Métro / RER / Tram)</span>
+          </label>
+          <label class="toggle-row">
+            <input type="checkbox" id="toggle-bus-stops">
+            <span>Bus Stops</span>
+          </label>
+          <label class="toggle-row">
+            <input type="checkbox" id="toggle-crossroads">
+            <span>Sampled Crossroads (OSM Intersections)</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <h2 class="section-title">Heatmap Styling &amp; Cutoff</h2>
+        <div class="slider-group">
+          <div class="slider-label-row">
+            <label for="slider-cutoff">Max Travel Time Cutoff</label>
+            <span id="label-cutoff" class="mono-val">60 min</span>
+          </div>
+          <input type="range" id="slider-cutoff" min="10" max="60" step="5" value="60">
+        </div>
+
+        <div class="slider-group">
+          <div class="slider-label-row">
+            <label for="slider-opacity">Heatmap Opacity</label>
+            <span id="label-opacity" class="mono-val">62%</span>
+          </div>
+          <input type="range" id="slider-opacity" min="0" max="90" step="2" value="62">
+        </div>
+
+        <div class="slider-group">
+          <div class="slider-label-row">
+            <label for="select-palette">Color Ramp</label>
+          </div>
+          <select id="select-palette">
+            <option value="turbo">Turbo (Cyan → Amber → Crimson)</option>
+            <option value="emerald">Emerald → Gold → Violet</option>
+            <option value="magma">Thermal Magma</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <h2 class="section-title">Point Inspector</h2>
+        <div id="inspector-card" class="inspector-card">
+          <p id="inspector-prompt" class="inspector-hint">
+            Click anywhere on the map or pick a Paris landmark to compare travel times from Jussieu.
+          </p>
+          <div id="inspector-results" class="hidden">
+            <div class="inspector-header-row">
+              <div>
+                <div id="insp-title" class="insp-title">Selected Location</div>
+                <div id="insp-coords" class="insp-coords"></div>
+              </div>
+              <span id="insp-winner-badge" class="winner-badge">Transit</span>
+            </div>
+            <div class="bar-list" id="insp-bars"></div>
+            <div id="insp-station-box" class="station-box"></div>
+          </div>
+        </div>
+
+        <div class="presets-row" id="landmark-presets" aria-label="Quick Paris Landmarks"></div>
+      </section>
+
+      <footer class="sidebar-footer">
+        <span id="stats-summary">Loading network index…</span>
+      </footer>
+    </aside>
+
+    <main id="map-container">
+      <div id="map" role="application" aria-label="Interactive Paris Travel Time Map"></div>
+
+      <div id="hover-hud" class="floating-hud hidden" aria-live="polite">
+        <span id="hover-hud-text">Hover map for travel times</span>
+      </div>
+
+      <div id="legend-box" class="floating-legend">
+        <div class="legend-title" id="legend-title">Travel Time from Jussieu</div>
+        <div id="legend-scale" class="legend-scale">
+          <div id="legend-bar" class="legend-bar"></div>
+          <div id="legend-ticks" class="legend-ticks"></div>
+        </div>
+        <div id="legend-categorical" class="legend-categorical hidden">
+          <div class="cat-item"><span class="cat-swatch cat-walk"></span><span>Pedestrian fastest</span></div>
+          <div class="cat-item"><span class="cat-swatch cat-bike"></span><span>Bicycle fastest</span></div>
+          <div class="cat-item"><span class="cat-swatch cat-transit"></span><span>Public Services fastest</span></div>
+        </div>
+      </div>
+
+      <div id="loading-overlay" class="loading-overlay">
+        <div class="loading-card">
+          <div class="spinner"></div>
+          <p id="loading-status">Loading Paris street &amp; transit network…</p>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <div id="methodology-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2 id="modal-title">Methodology &amp; Open Data Pipeline</h2>
+        <button type="button" id="btn-close-modal" class="btn-close" aria-label="Close modal">×</button>
+      </div>
+      <div class="modal-body">
+        <p>
+          Travel times are computed from <strong>Sorbonne Université — Campus Pierre et Marie Curie (7-9 quai Saint Bernard, 75005 Paris)</strong>
+          across Paris and Petite Couronne using a <strong>Hybrid Street-Graph Dijkstra + Transit Station Propagation</strong> pipeline:
+        </p>
+        <ol>
+          <li>
+            <strong>OpenStreetMap Street &amp; Cycleway Network:</strong> All walkable streets, bridges over the Seine,
+            footpaths, steps, and cycleways are parsed into weighted graphs. Every street intersection (crossroad)
+            is identified as a routing target.
+          </li>
+          <li>
+            <strong>Exact Pedestrian &amp; Bicycle Dijkstra:</strong> Single-source shortest paths compute exact door-to-door
+            times for walking (4.8 km/h, step penalties) and cycling (18.5 km/h on cycleways, 15.5 km/h on streets,
+            dismount on pedestrian/steps), strictly respecting physical barriers like the Seine bridges.
+          </li>
+          <li>
+            <strong>Public Services Graph + Pedestrian Propagation:</strong> Métro, RER, Transilien, Tramway, and Bus route
+            sequences are connected to street nodes with realistic boarding/wait times, dwell times, and commercial speeds.
+            Dijkstra propagates station arrival times outward along the pedestrian street graph to every crossroad.
+          </li>
+          <li>
+            <strong>Metric IDW Interpolation &amp; Contours:</strong> Crossroad travel times are interpolated onto a 200×200
+            spatial grid using local metric inverse-distance weighting (cKDTree) and converted into 5–60 minute GeoJSON isochrones.
+          </li>
+        </ol>
+        <div id="modal-stats-box" class="modal-stats-box"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/vendor/leaflet.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
+
