@@ -7,4 +7,5 @@
   - Parquet crossroad export (`/mnt/data/sorbonne-transport-map/crossroads_travel_times.parquet`), 200x200 IDW interpolated grids, and `contourpy` GeoJSON isochrones (5–60 min).
   - Hardened FastAPI server (`server.py`) with strict CSP, security headers, rate limiting, and coordinate validation.
   - Interactive Leaflet Canvas heatmap web UI with mode toggles (Public Transit, Pedestrian, Bicycle, Best Mode, Mode Winner), layer toggles (Heatmap, Isochrones, Stations, Sampled Crossroads), max-time cutoff slider, and click-to-inspect modal breakdown.
+  - Added explicit `walk_from_station_min` and `optimal_exit_station` last-mile station walk breakdown in `/api/query` and Point Inspector UI.
 

@@ -98,6 +98,10 @@ def test_api_endpoints_and_physical_sanity():
                 f"{name} transit_min={d['transit_min']} outside [{min_t}, {max_t}]"
             )
             assert d["transit_min"] <= d["walk_min"] + 0.01
+            assert d["optimal_exit_station"] is not None
+            assert "walk_from_station_min" in d["optimal_exit_station"]
+            assert d["nearest_rail_station"] is not None
+            assert "walk_from_station_min" in d["nearest_rail_station"]
 
 
 def test_security_input_validation_and_method_allowlist():

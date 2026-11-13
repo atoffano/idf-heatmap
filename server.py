@@ -306,16 +306,46 @@ async def query_point(
     row = state.df_crossroads.iloc[int(idx)]
 
     nearest_station = None
+    optimal_exit_station = None
     if state.station_tree is not None and state.stations:
         st_dist_m, st_idx = state.station_tree.query(q_xy)
         st = state.stations[int(st_idx)]
-        nearest_station = {**st, "distance_m": round(float(st_dist_m), 1)}
+        st_d = float(st_dist_m)
+        nearest_station = {
+            **st,
+            "distance_m": round(st_d, 1),
+            "walk_from_station_min": round((st_d * 1.25) / 80.0, 1),
+        }
+
+        k_cand = min(15, len(state.stations))
+        cand_dists, cand_idxs = state.station_tree.query(q_xy, k=k_cand)
+        best_total = float("inf")
+        best_cand: dict[str, Any] | None = None
+        for d_val, i_val in zip(np.atleast_1d(cand_dists), np.atleast_1d(cand_idxs)):
+            cand_st = state.stations[int(i_val)]
+            cand_d = float(d_val)
+            walk_min = (cand_d * 1.25) / 80.0
+            total_min = float(cand_st["transit_min"]) + walk_min
+            if total_min < best_total:
+                best_total = total_min
+                best_cand = {
+                    **cand_st,
+                    "distance_m": round(cand_d, 1),
+                    "walk_from_station_min": round(walk_min, 1),
+                    "estimated_total_min": round(total_min, 1),
+                }
+        optimal_exit_station = best_cand
 
     nearest_rail = None
     if state.rail_tree is not None and state.rail_stations:
         r_dist_m, r_idx = state.rail_tree.query(q_xy)
         rst = state.rail_stations[int(r_idx)]
-        nearest_rail = {**rst, "distance_m": round(float(r_dist_m), 1)}
+        r_d = float(r_dist_m)
+        nearest_rail = {
+            **rst,
+            "distance_m": round(r_d, 1),
+            "walk_from_station_min": round((r_d * 1.25) / 80.0, 1),
+        }
 
     return {
         "query_lat": round(lat, 6),
@@ -334,6 +364,7 @@ async def query_point(
         "fastest_mode": str(row["fastest_mode"]),
         "nearest_station": nearest_station,
         "nearest_rail_station": nearest_rail,
+        "optimal_exit_station": optimal_exit_station,
     }
 
 

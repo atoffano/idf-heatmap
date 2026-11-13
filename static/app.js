@@ -473,7 +473,7 @@
 
     const maxBar = Math.max(data.walk_min, data.bike_min, data.transit_min, 15);
     const items = [
-      { key: "transit", label: "Public Services", val: data.transit_min },
+      { key: "transit", label: "Public Services (incl. station walk)", val: data.transit_min },
       { key: "bike", label: "Bicycle", val: data.bike_min },
       { key: "walk", label: "Pedestrian", val: data.walk_min },
     ];
@@ -495,13 +495,23 @@
     barsEl.replaceChildren(...barNodes);
 
     const stationLines = [];
+    if (data.optimal_exit_station) {
+      const opt = data.optimal_exit_station;
+      stationLines.push(
+        el(
+          "div",
+          null,
+          `Via ${opt.name} (${opt.mode_label}): ${opt.transit_min.toFixed(1)} min to station + ${opt.walk_from_station_min.toFixed(1)} min walk (${opt.distance_m} m)`
+        )
+      );
+    }
     if (data.nearest_rail_station) {
       const rs = data.nearest_rail_station;
       stationLines.push(
         el(
           "div",
           null,
-          `Nearest Rail/Métro: ${rs.name} (${rs.mode_label}, ${rs.distance_m} m away · ${rs.transit_min.toFixed(1)} min from Jussieu)`
+          `Nearest Rail/Métro: ${rs.name} (${rs.mode_label}, ${rs.distance_m} m · +${rs.walk_from_station_min.toFixed(1)} min walk)`
         )
       );
     } else if (data.nearest_station) {
@@ -510,7 +520,7 @@
         el(
           "div",
           null,
-          `Nearest Stop: ${ns.name} (${ns.mode_label}, ${ns.distance_m} m away)`
+          `Nearest Stop: ${ns.name} (${ns.mode_label}, ${ns.distance_m} m · +${ns.walk_from_station_min.toFixed(1)} min walk)`
         )
       );
     }
