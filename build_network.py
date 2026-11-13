@@ -35,6 +35,7 @@ import requests
 from scipy.ndimage import gaussian_filter
 from scipy.spatial import cKDTree
 
+from build_overlays import generate_overlays
 from external_providers import (
     fetch_google_station_times,
     fetch_idfm_prim_station_times,
@@ -923,6 +924,7 @@ def build_all(force_refresh: bool = False) -> None:
             json.dump(obj, fh)
         tmp.replace(out_path)
 
+    generate_overlays(roads_data=roads_data, transit_data=transit_data)
     logger.info("Pipeline completed in %.2fs!", time.time() - t_start)
 
 

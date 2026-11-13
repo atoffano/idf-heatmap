@@ -58,17 +58,22 @@
     opacity: 0.62,
     showHeatmap: true,
     showIsochrones: true,
+    showNetworkLines: true,
     showStations: true,
     showBusStops: false,
     showCrossroads: false,
     meta: null,
     grids: {},
     isochrones: {},
+    transitLinesData: null,
+    bikeLanesData: null,
     stations: null,
     crossroads: null,
     map: null,
+    canvasRenderer: null,
     heatmapLayer: null,
     isoLayer: null,
+    networkLinesLayer: null,
     stationLayer: null,
     busLayer: null,
     crossroadLayer: null,
@@ -551,6 +556,62 @@
     }
   }
 
+  async function renderNetworkOverlay() {
+    if (appState.networkLinesLayer) {
+      appState.map.removeLayer(appState.networkLinesLayer);
+      appState.networkLinesLayer = null;
+    }
+    if (!appState.showNetworkLines) {
+      return;
+    }
+
+    const mode = appState.activeMode;
+    if (mode === "transit" || mode === "best" || mode === "winner") {
+      if (!appState.transitLinesData) {
+        appState.transitLinesData = await fetchJson("/api/transit-lines");
+      }
+      appState.networkLinesLayer = L.geoJSON(appState.transitLinesData, {
+        renderer: appState.canvasRenderer,
+        style(feature) {
+          const isRer = feature.properties.network === "RER";
+          return {
+            color: feature.properties.color || "#38bdf8",
+            weight: isRer ? 3.4 : 2.4,
+            opacity: isRer ? 0.92 : 0.88,
+            lineCap: "round",
+            lineJoin: "round",
+          };
+        },
+        onEachFeature(feature, layer) {
+          layer.bindTooltip(feature.properties.label || "Transit line", {
+            sticky: true,
+          });
+        },
+      }).addTo(appState.map);
+    } else if (mode === "bike") {
+      if (!appState.bikeLanesData) {
+        appState.bikeLanesData = await fetchJson("/api/bike-lanes");
+      }
+      appState.networkLinesLayer = L.geoJSON(appState.bikeLanesData, {
+        renderer: appState.canvasRenderer,
+        style(feature) {
+          const isTrack = feature.properties.tier === "track";
+          return {
+            color: isTrack ? "#22d3ee" : "#38bdf8",
+            weight: isTrack ? 2.0 : 1.2,
+            opacity: isTrack ? 0.88 : 0.65,
+            dashArray: isTrack ? null : "3 3",
+          };
+        },
+        onEachFeature(feature, layer) {
+          layer.bindTooltip(feature.properties.label || "Bike route", {
+            sticky: true,
+          });
+        },
+      }).addTo(appState.map);
+    }
+  }
+
   async function switchMode(newMode) {
     appState.activeMode = newMode;
     document.querySelectorAll(".mode-btn").forEach((btn) => {
@@ -569,7 +630,7 @@
 
     updateLegend();
     appState.heatmapLayer.redraw();
-    await renderIsochrones();
+    await Promise.all([renderIsochrones(), renderNetworkOverlay()]);
   }
 
   function setupEvents() {
@@ -589,6 +650,11 @@
     document.getElementById("toggle-isochrones").addEventListener("change", (evt) => {
       appState.showIsochrones = evt.target.checked;
       renderIsochrones();
+    });
+
+    document.getElementById("toggle-network-lines").addEventListener("change", (evt) => {
+      appState.showNetworkLines = evt.target.checked;
+      renderNetworkOverlay();
     });
 
     document.getElementById("toggle-stations").addEventListener("change", (evt) => {
@@ -674,6 +740,7 @@
     }).addTo(map);
 
     appState.map = map;
+    appState.canvasRenderer = L.canvas({ padding: 0.5 });
     appState.heatmapLayer = new HeatmapCanvasLayer().addTo(map);
 
     // Sorbonne Université origin marker (halo + core)
@@ -759,7 +826,11 @@
 
       updateLegend();
       appState.heatmapLayer.redraw();
-      await Promise.all([renderIsochrones(), renderStations()]);
+      await Promise.all([
+        renderIsochrones(),
+        renderNetworkOverlay(),
+        renderStations(),
+      ]);
 
       // Preload landmark inspection on Châtelet? Leave clean prompt until click, or keep ready
     } catch (err) {

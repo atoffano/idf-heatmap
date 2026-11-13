@@ -8,4 +8,6 @@
   - Hardened FastAPI server (`server.py`) with strict CSP, security headers, rate limiting, and coordinate validation.
   - Interactive Leaflet Canvas heatmap web UI with mode toggles (Public Transit, Pedestrian, Bicycle, Best Mode, Mode Winner), layer toggles (Heatmap, Isochrones, Stations, Sampled Crossroads), max-time cutoff slider, and click-to-inspect modal breakdown.
   - Added explicit `walk_from_station_min` and `optimal_exit_station` last-mile station walk breakdown in `/api/query` and Point Inspector UI.
+  - Switched basemap tiles to OpenStreetMap with low-contrast dark styling and updated CSP headers.
+  - Added mode-linked network overlays (`build_overlays.py`, `/api/transit-lines`, `/api/bike-lanes`): official-color Métro (1–14) + RER (A–E) lines on Public Services / Best / Mode Winner views, and protected cycleways + painted bike lanes on Bicycle view.
 

@@ -75,6 +75,20 @@ def test_api_endpoints_and_physical_sanity():
         assert cr_resp.status_code == 200
         assert cr_resp.json()["sampled_count"] > 500
 
+        tl_resp = client.get("/api/transit-lines")
+        assert tl_resp.status_code == 200
+        tl_fc = tl_resp.json()
+        assert tl_fc["type"] == "FeatureCollection"
+        assert len(tl_fc["features"]) == 21
+        assert all(f["geometry"]["type"] == "MultiLineString" for f in tl_fc["features"])
+
+        bl_resp = client.get("/api/bike-lanes")
+        assert bl_resp.status_code == 200
+        bl_fc = bl_resp.json()
+        assert bl_fc["type"] == "FeatureCollection"
+        assert {f["properties"]["tier"] for f in bl_fc["features"]} == {"track", "lane"}
+        assert all(len(f["geometry"]["coordinates"]) > 1000 for f in bl_fc["features"])
+
         # Origin sanity: 7-9 quai Saint Bernard
         q_origin = client.get("/api/query?lat=48.8471&lon=2.3574")
         assert q_origin.status_code == 200

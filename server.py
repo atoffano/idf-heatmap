@@ -87,6 +87,8 @@ class AppState:
         self.isochrones: dict[str, Any] = {}
         self.stations: list[dict[str, Any]] = []
         self.sampled_crossroads: list[dict[str, Any]] = []
+        self.transit_lines: dict[str, Any] = {"type": "FeatureCollection", "features": []}
+        self.bike_lanes: dict[str, Any] = {"type": "FeatureCollection", "features": []}
         self.df_crossroads: pd.DataFrame | None = None
         self.cr_tree: cKDTree | None = None
         self.station_tree: cKDTree | None = None
@@ -100,6 +102,8 @@ class AppState:
         stations_path = DATA_DIR / "stations.json"
         sampled_path = DATA_DIR / "sampled_crossroads.json"
         parquet_path = DATA_DIR / "crossroads_travel_times.parquet"
+        transit_lines_path = DATA_DIR / "transit_lines.json"
+        bike_lanes_path = DATA_DIR / "bike_lanes.json"
 
         required = [
             meta_path,
@@ -125,6 +129,12 @@ class AppState:
             self.stations = json.load(fh)
         with sampled_path.open("r", encoding="utf-8") as fh:
             self.sampled_crossroads = json.load(fh)
+        if transit_lines_path.exists():
+            with transit_lines_path.open("r", encoding="utf-8") as fh:
+                self.transit_lines = json.load(fh)
+        if bike_lanes_path.exists():
+            with bike_lanes_path.open("r", encoding="utf-8") as fh:
+                self.bike_lanes = json.load(fh)
 
         self.df_crossroads = pd.read_parquet(parquet_path)
         cr_xy = _latlon_to_xy(
@@ -291,6 +301,20 @@ async def get_crossroads() -> dict[str, Any]:
         "sampled_count": len(state.sampled_crossroads),
         "crossroads": state.sampled_crossroads,
     }
+
+
+@app.get("/api/transit-lines")
+async def get_transit_lines() -> dict[str, Any]:
+    if not state.loaded:
+        raise HTTPException(status_code=503, detail="Data index not loaded")
+    return state.transit_lines
+
+
+@app.get("/api/bike-lanes")
+async def get_bike_lanes() -> dict[str, Any]:
+    if not state.loaded:
+        raise HTTPException(status_code=503, detail="Data index not loaded")
+    return state.bike_lanes
 
 
 @app.get("/api/query")
