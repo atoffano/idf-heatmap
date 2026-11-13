@@ -389,7 +389,12 @@ select {
 #map {
   width: 100%;
   height: 100%;
-  background: #0b1220;
+  background: #0f172a;
+}
+
+/* Lean, low-contrast muted base tiles so the heatmap and isochrones stand out crisply */
+.clean-base-tiles {
+  filter: brightness(0.68) invert(1) contrast(3.2) hue-rotate(205deg) saturate(0.28);
 }
 
 .floating-hud {

@@ -50,7 +50,7 @@ CSP_POLICY = (
     "default-src 'self'; "
     "script-src 'self'; "
     "style-src 'self'; "
-    "img-src 'self' data: https://*.basemaps.cartocdn.com https://tile.openstreetmap.org; "
+    "img-src 'self' data: https://*.tile.openstreetmap.org https://tile.openstreetmap.org https://*.tile.openstreetmap.fr; "
     "connect-src 'self'; "
     "object-src 'none'; "
     "frame-ancestors 'none'; "
