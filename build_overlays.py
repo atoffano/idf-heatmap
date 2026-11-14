@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -15,7 +16,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-DATA_DIR = Path("/mnt/data/sorbonne-transport-map")
+BASE_DIR = Path(__file__).resolve().parent
+DATA_DIR = Path(
+    os.environ.get("DATA_DIR")
+    or (
+        "/mnt/data/sorbonne-transport-map"
+        if Path("/mnt/data/sorbonne-transport-map").exists()
+        else BASE_DIR / "data"
+    )
+)
 ROADS_CACHE = DATA_DIR / "raw_osm_roads.json"
 TRANSIT_CACHE = DATA_DIR / "raw_osm_transit.json"
 TRANSIT_LINES_OUT = DATA_DIR / "transit_lines.json"

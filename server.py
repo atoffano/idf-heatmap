@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import time
+import os
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -32,7 +33,14 @@ logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
-DATA_DIR = Path("/mnt/data/sorbonne-transport-map")
+DATA_DIR = Path(
+    os.environ.get("DATA_DIR")
+    or (
+        "/mnt/data/sorbonne-transport-map"
+        if Path("/mnt/data/sorbonne-transport-map").exists()
+        else BASE_DIR / "data"
+    )
+)
 
 SEEDS: dict[str, dict[str, Any]] = {
     "sorbonne": {
@@ -288,7 +296,10 @@ class AppState:
             loaded_seeds += 1
 
         if not self.seeds_data:
-            raise FileNotFoundError("No seed datasets could be loaded from data dir.")
+            raise FileNotFoundError(
+                f"No precomputed datasets found in {DATA_DIR}. "
+                "Please run 'python build_network.py' first to download OSM data and precompute heatmaps."
+            )
 
         self.loaded = True
         logger.info(
