@@ -31,6 +31,8 @@ Rather than sampling a naive grid with straight-line interpolation (which blurs 
 
 ## Quickstart
 
+For full configuration, systemd services, reverse-proxy setup, and troubleshooting, see the [Setup & Operations Guide (SETUP.md)](SETUP.md).
+
 ### Prerequisites
 - Python >= 3.11
 - Git
