@@ -21,7 +21,7 @@ TRANSIT_CACHE = DATA_DIR / "raw_osm_transit.json"
 TRANSIT_LINES_OUT = DATA_DIR / "transit_lines.json"
 BIKE_LANES_OUT = DATA_DIR / "bike_lanes.json"
 
-BBOX = (48.775, 2.240, 48.915, 2.470)
+BBOX = (48.665, 2.155, 48.915, 2.480)
 
 METRO_REFS = frozenset(
     {"1", "2", "3", "3bis", "4", "5", "6", "7", "7bis", "8", "9", "10", "11", "12", "13", "14"}
@@ -333,3 +333,4 @@ def generate_overlays(
 
 if __name__ == "__main__":
     generate_overlays()
+

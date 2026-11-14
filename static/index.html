@@ -11,16 +11,26 @@
   <div id="app-shell">
     <aside id="sidebar" aria-label="Transport Controls and Inspector">
       <header class="brand-header">
-        <div class="brand-badge">SU</div>
+        <div class="brand-badge" id="brand-badge">SU</div>
         <div class="brand-text">
-          <h1>Sorbonne Transport Heatmap</h1>
-          <p class="origin-sub">Campus Pierre et Marie Curie · 7-9 quai Saint Bernard, 75005 Paris</p>
+          <h1 id="app-title">Sorbonne Transport Heatmap</h1>
+          <p class="origin-sub" id="origin-sub">Campus Pierre et Marie Curie · 7-9 quai Saint Bernard, 75005 Paris</p>
         </div>
       </header>
 
+      <section class="panel-section">
+        <h2 class="section-title">Seed Origin</h2>
+        <div class="slider-group">
+          <select id="select-seed" aria-label="Origin Seed Point">
+            <option value="sorbonne">Sorbonne Université (Jussieu)</option>
+            <option value="antony">Antony (8 rue de la Renaissance)</option>
+          </select>
+        </div>
+      </section>
+
       <div class="quick-actions">
         <button id="btn-center-origin" type="button" class="btn-secondary">
-          Center on Jussieu
+          Center on Origin
         </button>
         <button id="btn-methodology" type="button" class="btn-secondary">
           Methodology

@@ -48,17 +48,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Origin: Sorbonne Université — Campus Pierre et Marie Curie
-ORIGIN_LAT = 48.8471
-ORIGIN_LON = 2.3574
-ORIGIN_ADDRESS = (
-    "Sorbonne Université — Campus Pierre et Marie Curie, "
-    "7-9 quai Saint Bernard, 75005 Paris"
-)
+# Configured origin seeds
+SEEDS: dict[str, dict[str, Any]] = {
+    "sorbonne": {
+        "id": "sorbonne",
+        "name": "Sorbonne Université (Jussieu)",
+        "address": (
+            "Sorbonne Université — Campus Pierre et Marie Curie, "
+            "7-9 quai Saint Bernard, 75005 Paris"
+        ),
+        "lat": 48.8471,
+        "lon": 2.3574,
+        "badge": "SU",
+    },
+    "antony": {
+        "id": "antony",
+        "name": "Antony (Renaissance)",
+        "address": "8 rue de la renaissance, 92160 Antony",
+        "lat": 48.760967,
+        "lon": 2.299217,
+        "badge": "AT",
+    },
+}
+DEFAULT_SEED = "sorbonne"
 
-# Paris + Petite Couronne (~10 km radius around Jussieu)
+ORIGIN_LAT = SEEDS[DEFAULT_SEED]["lat"]
+ORIGIN_LON = SEEDS[DEFAULT_SEED]["lon"]
+ORIGIN_ADDRESS = SEEDS[DEFAULT_SEED]["address"]
+
+# Paris + Petite Couronne + Antony (~18 km N-S x 17 km E-W)
 # (south_lat, west_lon, north_lat, east_lon)
-BBOX = (48.775, 2.240, 48.915, 2.470)
+BBOX = (48.665, 2.155, 48.915, 2.480)
 GRID_N = 200
 ISOCHRONE_LEVELS = [5, 10, 15, 20, 30, 45, 60]
 
@@ -67,6 +87,7 @@ ROADS_CACHE = DATA_DIR / "raw_osm_roads.json"
 TRANSIT_CACHE = DATA_DIR / "raw_osm_transit.json"
 IDFM_STATIONS_CACHE = DATA_DIR / "raw_idfm_stations.json"
 
+SEEDS_OUT = DATA_DIR / "seeds.json"
 PARQUET_OUT = DATA_DIR / "crossroads_travel_times.parquet"
 GRIDS_OUT = DATA_DIR / "heatmap_grids.json"
 ISOCHRONES_OUT = DATA_DIR / "isochrones.json"
@@ -75,6 +96,8 @@ SAMPLED_CROSSROADS_OUT = DATA_DIR / "sampled_crossroads.json"
 META_OUT = DATA_DIR / "metadata.json"
 
 OVERPASS_ENDPOINTS = [
+    "https://ovp.dresel.systems/api/interpreter",
+    "https://overpass.maprva.org/api/interpreter",
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
 ]
@@ -113,10 +136,16 @@ def haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return 2.0 * r * math.asin(min(1.0, math.sqrt(a)))
 
 
-def latlon_to_xy(lats: np.ndarray, lons: np.ndarray) -> np.ndarray:
+def latlon_to_xy(
+    lats: np.ndarray,
+    lons: np.ndarray,
+    orig_lat: float = ORIGIN_LAT,
+    orig_lon: float = ORIGIN_LON,
+) -> np.ndarray:
     """Project lat/lon arrays into local metric (x_m, y_m) relative to origin."""
-    x = (lons - ORIGIN_LON) * METERS_PER_DEG_LON
-    y = (lats - ORIGIN_LAT) * METERS_PER_DEG_LAT
+    meters_per_deg_lon = 111195.0 * math.cos(math.radians(orig_lat))
+    x = (lons - orig_lon) * meters_per_deg_lon
+    y = (lats - orig_lat) * METERS_PER_DEG_LAT
     return np.column_stack([x, y])
 
 
@@ -198,9 +227,45 @@ def fetch_idfm_stations(force_refresh: bool = False) -> list[dict[str, Any]]:
     return []
 
 
+def snap_origin_to_graph(
+    lat: float,
+    lon: float,
+    label: str,
+    valid_nodes: dict[int, tuple[float, float]],
+    nodes_coord: dict[int, tuple[float, float]],
+    g_walk: nx.Graph,
+    g_bike: nx.Graph,
+) -> int:
+    """Snap an origin coordinate to nearest street node and guarantee bicycle connectivity."""
+    node_ids = np.fromiter(valid_nodes.keys(), dtype=np.int64)
+    coords_arr = np.array([valid_nodes[nid] for nid in node_ids], dtype=np.float64)
+    xy_arr = latlon_to_xy(coords_arr[:, 0], coords_arr[:, 1], orig_lat=lat, orig_lon=lon)
+    tree = cKDTree(xy_arr)
+    dist_orig, idx_orig = tree.query([0.0, 0.0])
+    origin_node = int(node_ids[idx_orig])
+    logger.info(
+        "Snapped origin '%s' to street node %d (%.1fm from %.5f, %.5f)",
+        label,
+        origin_node,
+        dist_orig,
+        lat,
+        lon,
+    )
+
+    if origin_node not in g_bike:
+        bike_ids = np.fromiter(g_bike.nodes(), dtype=np.int64)
+        bike_coords = np.array([nodes_coord[nid] for nid in bike_ids], dtype=np.float64)
+        b_tree = cKDTree(latlon_to_xy(bike_coords[:, 0], bike_coords[:, 1], orig_lat=lat, orig_lon=lon))
+        _, b_idx = b_tree.query([0.0, 0.0])
+        bike_origin = int(bike_ids[b_idx])
+        g_bike.add_edge(origin_node, bike_origin, weight=15.0, dist_m=20.0)
+
+    return origin_node
+
+
 def build_street_graphs(
     roads_data: dict[str, Any],
-) -> tuple[nx.Graph, nx.Graph, dict[int, tuple[float, float]], set[int], int]:
+) -> tuple[nx.Graph, nx.Graph, dict[int, tuple[float, float]], set[int], dict[int, tuple[float, float]]]:
     """Construct G_walk and G_bike from Overpass road elements and detect crossroads."""
     s_lat, w_lon, n_lat, e_lon = BBOX
     nodes_coord: dict[int, tuple[float, float]] = {}
@@ -304,35 +369,12 @@ def build_street_graphs(
         if s_lat <= nodes_coord[nid][0] <= n_lat and w_lon <= nodes_coord[nid][1] <= e_lon
     }
 
-    # Find origin node nearest to 7-9 quai Saint Bernard
-    node_ids = np.fromiter(valid_nodes.keys(), dtype=np.int64)
-    coords_arr = np.array([valid_nodes[nid] for nid in node_ids], dtype=np.float64)
-    xy_arr = latlon_to_xy(coords_arr[:, 0], coords_arr[:, 1])
-    tree = cKDTree(xy_arr)
-    dist_orig, idx_orig = tree.query([0.0, 0.0])
-    origin_node = int(node_ids[idx_orig])
-    logger.info(
-        "Snapped origin to street node %d (%.1fm from 7-9 quai Saint Bernard)",
-        origin_node,
-        dist_orig,
-    )
-
-    # Ensure origin_node is also in g_bike
-    if origin_node not in g_bike:
-        bike_ids = np.fromiter(g_bike.nodes(), dtype=np.int64)
-        bike_coords = np.array([nodes_coord[nid] for nid in bike_ids], dtype=np.float64)
-        b_tree = cKDTree(latlon_to_xy(bike_coords[:, 0], bike_coords[:, 1]))
-        _, b_idx = b_tree.query([0.0, 0.0])
-        bike_origin = int(bike_ids[b_idx])
-        g_bike.add_edge(origin_node, bike_origin, weight=15.0, dist_m=20.0)
-
     # Identify crossroads: degree >= 3 OR shared by >= 2 distinct OSM ways
     crossroad_nodes = {
         nid
         for nid in valid_nodes
         if g_walk.degree(nid) >= 3 or way_membership_count.get(nid, 0) >= 2
     }
-    crossroad_nodes.add(origin_node)
 
     logger.info(
         "Built street graphs: walk=%d nodes / %d edges, bike=%d nodes / %d edges, crossroads=%d",
@@ -342,7 +384,7 @@ def build_street_graphs(
         g_bike.number_of_edges(),
         len(crossroad_nodes),
     )
-    return g_walk, g_bike, nodes_coord, crossroad_nodes, origin_node
+    return g_walk, g_bike, nodes_coord, crossroad_nodes, valid_nodes
 
 
 def _extract_ordered_stops(
@@ -389,7 +431,7 @@ def build_multimodal_transit_graph(
     g_walk: nx.Graph,
     nodes_coord: dict[int, tuple[float, float]],
     transit_data: dict[str, Any],
-    origin_node: int,
+    origin_node: int | None = None,
 ) -> tuple[nx.DiGraph, list[dict[str, Any]]]:
     """Build directed multimodal transit graph combining G_walk and OSM transit lines."""
     g_transit = nx.DiGraph()
@@ -574,7 +616,7 @@ def build_multimodal_transit_graph(
         logger.info("Fetching live IDFM PRIM station calibration...")
         calibrated_sec.update(fetch_idfm_prim_station_times(ORIGIN_LAT, ORIGIN_LON, hub_stations))
 
-    if calibrated_sec:
+    if origin_node is not None and calibrated_sec:
         name_to_sec = {
             st["name"].lower(): calibrated_sec[st["id"]]
             for st in hub_stations
@@ -671,6 +713,8 @@ def deduplicate_stations(
 
 def interpolate_grids_and_isochrones(
     df_crossroads: pd.DataFrame,
+    orig_lat: float = ORIGIN_LAT,
+    orig_lon: float = ORIGIN_LON,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Interpolate 200x200 travel-time grids (IDW + light smoothing) and extract GeoJSON contours."""
     s_lat, w_lon, n_lat, e_lon = BBOX
@@ -678,8 +722,18 @@ def interpolate_grids_and_isochrones(
     lons_1d = np.linspace(w_lon, e_lon, GRID_N)
     lon_grid, lat_grid = np.meshgrid(lons_1d, lats_1d)
 
-    cr_xy = latlon_to_xy(df_crossroads["lat"].to_numpy(), df_crossroads["lon"].to_numpy())
-    grid_xy = latlon_to_xy(lat_grid.ravel(), lon_grid.ravel())
+    cr_xy = latlon_to_xy(
+        df_crossroads["lat"].to_numpy(),
+        df_crossroads["lon"].to_numpy(),
+        orig_lat=orig_lat,
+        orig_lon=orig_lon,
+    )
+    grid_xy = latlon_to_xy(
+        lat_grid.ravel(),
+        lon_grid.ravel(),
+        orig_lat=orig_lat,
+        orig_lon=orig_lon,
+    )
 
     tree = cKDTree(cr_xy)
     k_neighbors = min(8, len(df_crossroads))
@@ -797,36 +851,30 @@ def sample_crossroads_for_ui(df_crossroads: pd.DataFrame, target_count: int = 35
     return records
 
 
-def build_all(force_refresh: bool = False) -> None:
-    """Execute full multimodal network construction and write output artifacts."""
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    t_start = time.time()
+def solve_seed(
+    seed: dict[str, Any],
+    g_walk: nx.Graph,
+    g_bike: nx.Graph,
+    g_transit: nx.DiGraph,
+    nodes_coord: dict[int, tuple[float, float]],
+    crossroad_nodes: set[int],
+    valid_nodes: dict[int, tuple[float, float]],
+    raw_stations: list[dict[str, Any]],
+    idfm_stations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Compute shortest paths, crossroad travel times, grids, and isochrones for one origin seed."""
+    seed_id = seed["id"]
+    seed_name = seed["name"]
+    orig_lat = float(seed["lat"])
+    orig_lon = float(seed["lon"])
 
-    s_lat, w_lon, n_lat, e_lon = BBOX
-    roads_query = (
-        f"[out:json][timeout:120];"
-        f'way["highway"~"^(primary|secondary|tertiary|residential|living_street|pedestrian|'
-        f'cycleway|footway|steps|unclassified|service|trunk_link|primary_link|secondary_link|'
-        f'tertiary_link)$"]({s_lat},{w_lon},{n_lat},{e_lon});'
-        f"out body;>;out skel qt;"
+    origin_node = snap_origin_to_graph(
+        orig_lat, orig_lon, seed_name, valid_nodes, nodes_coord, g_walk, g_bike
     )
-    transit_query = (
-        f"[out:json][timeout:120];"
-        f'relation["type"="route"]["route"~"^(subway|light_rail|train|tram|bus)$"]'
-        f"({s_lat},{w_lon},{n_lat},{e_lon});"
-        f"out body;node(r);out body qt;"
-    )
+    seed_crossroads = set(crossroad_nodes)
+    seed_crossroads.add(origin_node)
 
-    roads_data = query_overpass(roads_query, ROADS_CACHE, force_refresh=force_refresh)
-    transit_data = query_overpass(transit_query, TRANSIT_CACHE, force_refresh=force_refresh)
-    idfm_stations = fetch_idfm_stations(force_refresh=force_refresh)
-
-    g_walk, g_bike, nodes_coord, crossroad_nodes, origin_node = build_street_graphs(roads_data)
-    g_transit, raw_stations = build_multimodal_transit_graph(
-        g_walk, nodes_coord, transit_data, origin_node
-    )
-
-    logger.info("Running single-source Dijkstra on walk, bike, and transit graphs...")
+    logger.info("[%s] Running single-source Dijkstra on walk, bike, and transit graphs...", seed_id)
     walk_sec_map = nx.single_source_dijkstra_path_length(g_walk, origin_node, weight="weight")
     bike_sec_map = nx.single_source_dijkstra_path_length(g_bike, origin_node, weight="weight")
     transit_sec_map = nx.single_source_dijkstra_path_length(g_transit, origin_node, weight="weight")
@@ -836,10 +884,12 @@ def build_all(force_refresh: bool = False) -> None:
     bike_reachable_coords = np.array(
         [nodes_coord[nid] for nid in bike_reachable_ids], dtype=np.float64
     )
-    bike_tree = cKDTree(latlon_to_xy(bike_reachable_coords[:, 0], bike_reachable_coords[:, 1]))
+    bike_tree = cKDTree(
+        latlon_to_xy(bike_reachable_coords[:, 0], bike_reachable_coords[:, 1], orig_lat, orig_lon)
+    )
 
     rows: list[dict[str, Any]] = []
-    for nid in sorted(crossroad_nodes):
+    for nid in sorted(seed_crossroads):
         w_sec = walk_sec_map.get(nid)
         t_sec = transit_sec_map.get(nid)
         b_sec = bike_sec_map.get(nid)
@@ -847,7 +897,7 @@ def build_all(force_refresh: bool = False) -> None:
             continue
         if b_sec is None:
             lat_n, lon_n = nodes_coord[nid]
-            q_xy = latlon_to_xy(np.array([lat_n]), np.array([lon_n]))[0]
+            q_xy = latlon_to_xy(np.array([lat_n]), np.array([lon_n]), orig_lat, orig_lon)[0]
             dist_m, b_idx = bike_tree.query(q_xy)
             nearest_b_nid = int(bike_reachable_ids[int(b_idx)])
             b_sec = min(w_sec, bike_sec_map[nearest_b_nid] + (float(dist_m) / 1.333) + 15.0)
@@ -883,19 +933,20 @@ def build_all(force_refresh: bool = False) -> None:
 
     df_crossroads = pd.DataFrame(rows)
     if df_crossroads.empty:
-        raise RuntimeError("No crossroads were computed.")
-
-    logger.info("Writing %d crossroads to Parquet: %s", len(df_crossroads), PARQUET_OUT)
-    df_crossroads.to_parquet(PARQUET_OUT, index=False)
+        raise RuntimeError(f"No crossroads were computed for seed {seed_id}.")
 
     stations_out = deduplicate_stations(raw_stations, transit_sec_map, idfm_stations)
-    grids_payload, isochrones_payload = interpolate_grids_and_isochrones(df_crossroads)
+    grids_payload, isochrones_payload = interpolate_grids_and_isochrones(
+        df_crossroads, orig_lat=orig_lat, orig_lon=orig_lon
+    )
     sampled_crossroads = sample_crossroads_for_ui(df_crossroads)
 
     meta_payload = {
-        "origin_address": ORIGIN_ADDRESS,
-        "origin_lat": ORIGIN_LAT,
-        "origin_lon": ORIGIN_LON,
+        "active_seed": seed_id,
+        "seeds": list(SEEDS.values()),
+        "origin_address": seed["address"],
+        "origin_lat": orig_lat,
+        "origin_lon": orig_lon,
         "origin_node_id": int(origin_node),
         "bbox": list(BBOX),
         "total_crossroads": int(len(df_crossroads)),
@@ -912,22 +963,116 @@ def build_all(force_refresh: bool = False) -> None:
         "built_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
-    for out_path, obj in [
-        (GRIDS_OUT, grids_payload),
-        (ISOCHRONES_OUT, isochrones_payload),
-        (STATIONS_OUT, stations_out),
-        (SAMPLED_CROSSROADS_OUT, sampled_crossroads),
-        (META_OUT, meta_payload),
-    ]:
-        tmp = out_path.with_suffix(".json.tmp")
-        with tmp.open("w", encoding="utf-8") as fh:
-            json.dump(obj, fh)
-        tmp.replace(out_path)
+    return {
+        "df_crossroads": df_crossroads,
+        "stations_out": stations_out,
+        "grids_payload": grids_payload,
+        "isochrones_payload": isochrones_payload,
+        "sampled_crossroads": sampled_crossroads,
+        "meta_payload": meta_payload,
+    }
+
+
+def build_all(force_refresh: bool = False) -> None:
+    """Execute full multimodal network construction and write output artifacts for all seeds."""
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    t_start = time.time()
+
+    s_lat, w_lon, n_lat, e_lon = BBOX
+    roads_query = (
+        f"[out:json][timeout:180];"
+        f'way["highway"~"^(primary|secondary|tertiary|residential|living_street|pedestrian|'
+        f'cycleway|footway|steps|unclassified|service|trunk_link|primary_link|secondary_link|'
+        f'tertiary_link)$"]({s_lat},{w_lon},{n_lat},{e_lon});'
+        f"out body;>;out skel qt;"
+    )
+    transit_query = (
+        f"[out:json][timeout:180];"
+        f'relation["type"="route"]["route"~"^(subway|light_rail|train|tram|bus)$"]'
+        f"({s_lat},{w_lon},{n_lat},{e_lon});"
+        f"out body;node(r);out body qt;"
+    )
+
+    roads_data = query_overpass(roads_query, ROADS_CACHE, force_refresh=force_refresh)
+    transit_data = query_overpass(transit_query, TRANSIT_CACHE, force_refresh=force_refresh)
+    idfm_stations = fetch_idfm_stations(force_refresh=force_refresh)
+
+    g_walk, g_bike, nodes_coord, crossroad_nodes, valid_nodes = build_street_graphs(roads_data)
+    g_transit, raw_stations = build_multimodal_transit_graph(
+        g_walk, nodes_coord, transit_data
+    )
+
+    # Save seeds list metadata
+    seeds_list = list(SEEDS.values())
+    tmp_seeds = SEEDS_OUT.with_suffix(".json.tmp")
+    with tmp_seeds.open("w", encoding="utf-8") as fh:
+        json.dump(seeds_list, fh, indent=2)
+    tmp_seeds.replace(SEEDS_OUT)
+
+    for seed_id, seed_cfg in SEEDS.items():
+        logger.info("Computing network reachability for seed '%s' (%s)...", seed_id, seed_cfg["name"])
+        res = solve_seed(
+            seed=seed_cfg,
+            g_walk=g_walk,
+            g_bike=g_bike,
+            g_transit=g_transit,
+            nodes_coord=nodes_coord,
+            crossroad_nodes=crossroad_nodes,
+            valid_nodes=valid_nodes,
+            raw_stations=raw_stations,
+            idfm_stations=idfm_stations,
+        )
+
+        df_crossroads = res["df_crossroads"]
+        stations_out = res["stations_out"]
+        grids_payload = res["grids_payload"]
+        isochrones_payload = res["isochrones_payload"]
+        sampled_crossroads = res["sampled_crossroads"]
+        meta_payload = res["meta_payload"]
+
+        # Seed-specific output filenames
+        seed_parquet = DATA_DIR / f"crossroads_travel_times_{seed_id}.parquet"
+        seed_grids = DATA_DIR / f"heatmap_grids_{seed_id}.json"
+        seed_iso = DATA_DIR / f"isochrones_{seed_id}.json"
+        seed_stations = DATA_DIR / f"stations_{seed_id}.json"
+        seed_sampled = DATA_DIR / f"sampled_crossroads_{seed_id}.json"
+        seed_meta = DATA_DIR / f"metadata_{seed_id}.json"
+
+        logger.info("[%s] Writing %d crossroads to %s", seed_id, len(df_crossroads), seed_parquet)
+        df_crossroads.to_parquet(seed_parquet, index=False)
+
+        artifacts = [
+            (seed_grids, grids_payload),
+            (seed_iso, isochrones_payload),
+            (seed_stations, stations_out),
+            (seed_sampled, sampled_crossroads),
+            (seed_meta, meta_payload),
+        ]
+
+        # For default seed, also populate standard filenames for backward compatibility
+        if seed_id == DEFAULT_SEED:
+            logger.info("Writing default Parquet to %s", PARQUET_OUT)
+            df_crossroads.to_parquet(PARQUET_OUT, index=False)
+            artifacts.extend([
+                (GRIDS_OUT, grids_payload),
+                (ISOCHRONES_OUT, isochrones_payload),
+                (STATIONS_OUT, stations_out),
+                (SAMPLED_CROSSROADS_OUT, sampled_crossroads),
+                (META_OUT, meta_payload),
+            ])
+
+        for out_path, obj in artifacts:
+            tmp = out_path.with_suffix(".json.tmp")
+            with tmp.open("w", encoding="utf-8") as fh:
+                json.dump(obj, fh)
+            tmp.replace(out_path)
 
     generate_overlays(roads_data=roads_data, transit_data=transit_data)
-    logger.info("Pipeline completed in %.2fs!", time.time() - t_start)
+    logger.info("Pipeline completed for all seeds in %.2fs!", time.time() - t_start)
 
 
 if __name__ == "__main__":
-    build_all()
+    import sys
+    force = "--force" in sys.argv or "-f" in sys.argv
+    build_all(force_refresh=force)
 

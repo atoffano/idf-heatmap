@@ -7,7 +7,11 @@
     { name: "Gare de Lyon", lat: 48.8443, lon: 2.3744 },
     { name: "Gare du Nord", lat: 48.8809, lon: 2.3553 },
     { name: "Montparnasse", lat: 48.8421, lon: 2.3219 },
-    { name: "Nation", lat: 48.8483, lon: 2.3959 },
+    { name: "Sorbonne (Jussieu)", lat: 48.8471, lon: 2.3574 },
+    { name: "Antony (RER B)", lat: 48.7547, lon: 2.3006 },
+    { name: "Massy-Palaiseau", lat: 48.7252, lon: 2.2605 },
+    { name: "Parc de Sceaux", lat: 48.7753, lon: 2.2982 },
+    { name: "Aéroport d'Orly", lat: 48.7262, lon: 2.3652 },
     { name: "La Défense", lat: 48.8886, lon: 2.2442 },
   ];
 
@@ -52,6 +56,12 @@
   };
 
   const appState = {
+    activeSeed: "sorbonne",
+    seeds: [],
+    originCoords: [48.8471, 2.3574],
+    originHalo: null,
+    originPin: null,
+    lastInspectedLocation: null,
     activeMode: "transit",
     palette: "turbo",
     cutoffMin: 60,
@@ -129,7 +139,8 @@
     if (appState.grids[mode]) {
       return appState.grids[mode];
     }
-    const data = await fetchJson(`/api/grid/${encodeURIComponent(mode)}`);
+    const seedParam = encodeURIComponent(appState.activeSeed);
+    const data = await fetchJson(`/api/grid/${encodeURIComponent(mode)}?seed=${seedParam}`);
     appState.grids[mode] = data;
     return data;
   }
@@ -139,7 +150,8 @@
     if (appState.isochrones[targetMode]) {
       return appState.isochrones[targetMode];
     }
-    const data = await fetchJson(`/api/isochrones/${encodeURIComponent(targetMode)}`);
+    const seedParam = encodeURIComponent(appState.activeSeed);
+    const data = await fetchJson(`/api/isochrones/${encodeURIComponent(targetMode)}?seed=${seedParam}`);
     appState.isochrones[targetMode] = data;
     return data;
   }
@@ -304,7 +316,9 @@
       return;
     }
 
-    legendTitle.textContent = `${MODE_LABELS[appState.activeMode]} Time from Jussieu`;
+    const currentSeed = (appState.seeds || []).find((s) => s.id === appState.activeSeed);
+    const seedShortName = currentSeed ? (currentSeed.id === "sorbonne" ? "Jussieu" : "Antony") : "Origin";
+    legendTitle.textContent = `${MODE_LABELS[appState.activeMode]} Time from ${seedShortName}`;
     scaleBox.classList.remove("hidden");
     catBox.classList.add("hidden");
 
@@ -356,7 +370,8 @@
 
   async function renderStations() {
     if (!appState.stations) {
-      const resp = await fetchJson("/api/stations?mode=all");
+      const seedParam = encodeURIComponent(appState.activeSeed);
+      const resp = await fetchJson(`/api/stations?mode=all&seed=${seedParam}`);
       appState.stations = resp.stations || [];
     }
 
@@ -368,6 +383,9 @@
       appState.map.removeLayer(appState.busLayer);
       appState.busLayer = null;
     }
+
+    const currentSeed = (appState.seeds || []).find((s) => s.id === appState.activeSeed);
+    const seedShortName = currentSeed ? (currentSeed.id === "sorbonne" ? "Jussieu" : "Antony") : "Origin";
 
     if (appState.showStations) {
       const railMarkers = [];
@@ -391,7 +409,7 @@
         marker.bindPopup(() => {
           const linesTxt = st.lines && st.lines.length ? `Lines: ${st.lines.join(", ")}` : "";
           return buildPopupNode(st.name, [
-            `${st.mode_label} · ${st.transit_min.toFixed(1)} min from Jussieu`,
+            `${st.mode_label} · ${st.transit_min.toFixed(1)} min from ${seedShortName}`,
             linesTxt,
           ]);
         });
@@ -415,7 +433,7 @@
         });
         marker.bindPopup(() =>
           buildPopupNode(st.name, [
-            `Bus stop · ${st.transit_min.toFixed(1)} min from Jussieu`,
+            `Bus stop · ${st.transit_min.toFixed(1)} min from ${seedShortName}`,
             st.lines && st.lines.length ? `Lines: ${st.lines.join(", ")}` : "",
           ])
         );
@@ -434,7 +452,8 @@
       return;
     }
     if (!appState.crossroads) {
-      const data = await fetchJson("/api/crossroads");
+      const seedParam = encodeURIComponent(appState.activeSeed);
+      const data = await fetchJson(`/api/crossroads?seed=${seedParam}`);
       appState.crossroads = data.crossroads || [];
     }
 
@@ -534,8 +553,10 @@
 
   async function inspectLocation(lat, lon, customTitle) {
     try {
+      appState.lastInspectedLocation = { lat, lon, customTitle };
+      const seedParam = encodeURIComponent(appState.activeSeed);
       const data = await fetchJson(
-        `/api/query?lat=${encodeURIComponent(lat.toFixed(6))}&lon=${encodeURIComponent(lon.toFixed(6))}`
+        `/api/query?lat=${encodeURIComponent(lat.toFixed(6))}&lon=${encodeURIComponent(lon.toFixed(6))}&seed=${seedParam}`
       );
       if (appState.queryMarker) {
         appState.map.removeLayer(appState.queryMarker);
@@ -552,7 +573,7 @@
     } catch (_err) {
       const promptEl = document.getElementById("inspector-prompt");
       promptEl.classList.remove("hidden");
-      promptEl.textContent = "Point outside Paris + Petite Couronne coverage area.";
+      promptEl.textContent = "Point outside coverage area.";
     }
   }
 
@@ -612,6 +633,81 @@
     }
   }
 
+  async function switchSeed(newSeedId) {
+    if (appState.activeSeed === newSeedId && appState.meta) {
+      return;
+    }
+    appState.activeSeed = newSeedId;
+    appState.grids = {};
+    appState.isochrones = {};
+    appState.stations = null;
+    appState.crossroads = null;
+
+    const seedParam = encodeURIComponent(newSeedId);
+    const meta = await fetchJson(`/api/meta?seed=${seedParam}`);
+    appState.meta = meta;
+
+    const currentSeed = (appState.seeds || []).find((s) => s.id === newSeedId) || {
+      id: newSeedId,
+      name: meta.origin_address,
+      address: meta.origin_address,
+      lat: meta.origin_lat,
+      lon: meta.origin_lon,
+      badge: newSeedId === "antony" ? "AT" : "SU",
+    };
+
+    const badgeEl = document.getElementById("brand-badge");
+    if (badgeEl) {
+      badgeEl.textContent = currentSeed.badge || (newSeedId === "antony" ? "AT" : "SU");
+    }
+    const originSubEl = document.getElementById("origin-sub");
+    if (originSubEl) {
+      originSubEl.textContent = meta.origin_address;
+    }
+    const selectEl = document.getElementById("select-seed");
+    if (selectEl) {
+      selectEl.value = newSeedId;
+    }
+
+    const coords = [meta.origin_lat, meta.origin_lon];
+    appState.originCoords = coords;
+    if (appState.originHalo) {
+      appState.originHalo.setLatLng(coords);
+    }
+    if (appState.originPin) {
+      appState.originPin.setLatLng(coords);
+      appState.originPin.unbindPopup();
+      appState.originPin.bindPopup(() =>
+        buildPopupNode(currentSeed.name || "Origin Seed", [
+          meta.origin_address,
+          "Origin (0.0 min)",
+        ])
+      );
+    }
+    appState.map.setView(coords, 13, { animate: true });
+
+    if (appState.activeMode === "winner") {
+      await Promise.all([ensureGrid("walk"), ensureGrid("bike"), ensureGrid("transit")]);
+    } else {
+      await ensureGrid(appState.activeMode);
+    }
+
+    updateLegend();
+    appState.heatmapLayer.redraw();
+    await Promise.all([renderIsochrones(), renderStations()]);
+    if (appState.showCrossroads) {
+      await renderCrossroads();
+    }
+
+    if (appState.lastInspectedLocation) {
+      inspectLocation(
+        appState.lastInspectedLocation.lat,
+        appState.lastInspectedLocation.lon,
+        appState.lastInspectedLocation.customTitle
+      );
+    }
+  }
+
   async function switchMode(newMode) {
     appState.activeMode = newMode;
     document.querySelectorAll(".mode-btn").forEach((btn) => {
@@ -634,6 +730,13 @@
   }
 
   function setupEvents() {
+    const seedSelect = document.getElementById("select-seed");
+    if (seedSelect) {
+      seedSelect.addEventListener("change", (evt) => {
+        switchSeed(evt.target.value);
+      });
+    }
+
     document.getElementById("mode-buttons").addEventListener("click", (evt) => {
       const btn = evt.target.closest(".mode-btn");
       if (!btn || !btn.dataset.mode) {
@@ -694,7 +797,7 @@
     });
 
     document.getElementById("btn-center-origin").addEventListener("click", () => {
-      appState.map.setView(ORIGIN_COORDS, 13, { animate: true });
+      appState.map.setView(appState.originCoords, 13, { animate: true });
     });
 
     const modal = document.getElementById("methodology-modal");
@@ -725,9 +828,9 @@
 
   function initMap() {
     const map = L.map("map", {
-      center: ORIGIN_COORDS,
+      center: appState.originCoords,
       zoom: 13,
-      minZoom: 11,
+      minZoom: 10,
       maxZoom: 17,
       zoomControl: true,
     });
@@ -743,15 +846,15 @@
     appState.canvasRenderer = L.canvas({ padding: 0.5 });
     appState.heatmapLayer = new HeatmapCanvasLayer().addTo(map);
 
-    // Sorbonne Université origin marker (halo + core)
-    L.circleMarker(ORIGIN_COORDS, {
+    // Seed origin marker (halo + core)
+    appState.originHalo = L.circleMarker(appState.originCoords, {
       radius: 14,
       stroke: false,
       fillColor: "#3b82f6",
       fillOpacity: 0.28,
     }).addTo(map);
 
-    const originPin = L.circleMarker(ORIGIN_COORDS, {
+    appState.originPin = L.circleMarker(appState.originCoords, {
       radius: 7,
       color: "#ffffff",
       weight: 2.5,
@@ -759,7 +862,7 @@
       fillOpacity: 1.0,
     }).addTo(map);
 
-    originPin.bindPopup(() =>
+    appState.originPin.bindPopup(() =>
       buildPopupNode("Sorbonne Université — Campus Pierre et Marie Curie", [
         "7-9 quai Saint Bernard, 75005 Paris",
         "Origin (0.0 min)",
@@ -804,14 +907,28 @@
 
     try {
       loadingStatus.textContent = "Loading network metadata and travel-time grids…";
-      const [meta] = await Promise.all([
-        fetchJson("/api/meta"),
+      const [seeds, meta] = await Promise.all([
+        fetchJson("/api/seeds"),
+        fetchJson("/api/meta?seed=sorbonne"),
         ensureGrid("transit"),
         ensureGrid("walk"),
         ensureGrid("bike"),
         ensureIsochrones("transit"),
       ]);
+      appState.seeds = seeds;
       appState.meta = meta;
+
+      const selectSeed = document.getElementById("select-seed");
+      if (selectSeed && seeds && seeds.length) {
+        selectSeed.replaceChildren(
+          ...seeds.map((s) => {
+            const opt = el("option", null, `${s.name} (${s.id})`);
+            opt.value = s.id;
+            opt.selected = s.id === appState.activeSeed;
+            return opt;
+          })
+        );
+      }
 
       document.getElementById("stats-summary").textContent =
         `${meta.total_crossroads.toLocaleString()} crossroads · ` +
@@ -831,8 +948,6 @@
         renderNetworkOverlay(),
         renderStations(),
       ]);
-
-      // Preload landmark inspection on Châtelet? Leave clean prompt until click, or keep ready
     } catch (err) {
       loadingStatus.textContent = `Failed to load transport data: ${err.message}`;
       return;

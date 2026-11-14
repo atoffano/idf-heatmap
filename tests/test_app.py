@@ -130,10 +130,88 @@ def test_security_input_validation_and_method_allowlist():
         assert client.get("/api/query?lat=48.85&lon=-10.0").status_code == 422
         assert client.get("/api/query?lat=abc&lon=2.35").status_code == 422
 
+        # Test HEAD request on root
+        resp_head = client.head("/")
+        assert resp_head.status_code == 200
+        assert resp_head.headers.get("X-Content-Type-Options") == "nosniff"
+
+        # Health endpoint
+        resp_health = client.get("/healthz")
+        assert resp_health.status_code == 200
+        assert resp_health.json()["status"] == "ok"
+
         # Disallowed HTTP methods
         assert client.post("/api/meta").status_code == 405
         assert client.put("/api/meta").status_code == 405
         assert client.delete("/api/meta").status_code == 405
+
+        # Invalid seed
+        assert client.get("/api/meta?seed=spaceship").status_code == 400
+        assert client.get("/api/grid/walk?seed=spaceship").status_code == 400
+        assert client.get("/api/query?lat=48.85&lon=2.35&seed=spaceship").status_code == 400
+
+
+def test_antony_seed_and_multi_origin_support():
+    parquet_path = DATA_DIR / "crossroads_travel_times_antony.parquet"
+    assert parquet_path.exists(), "Antony Parquet crossroad dataset missing"
+    df = pd.read_parquet(parquet_path)
+    assert len(df) >= 15000, f"Expected >= 15,000 crossroads, got {len(df)}"
+    assert (df["transit_min"] <= df["walk_min"] + 1e-6).all()
+    assert (df["best_min"] <= df["walk_min"] + 1e-6).all()
+    assert (df["best_min"] <= df["bike_min"] + 1e-6).all()
+    assert (df["best_min"] <= df["transit_min"] + 1e-6).all()
+
+    with TestClient(app) as client:
+        # Seeds endpoint
+        resp_seeds = client.get("/api/seeds")
+        assert resp_seeds.status_code == 200
+        seeds = resp_seeds.json()
+        assert len(seeds) >= 2
+        seed_ids = {s["id"] for s in seeds}
+        assert "sorbonne" in seed_ids and "antony" in seed_ids
+
+        # Meta for Antony
+        resp_meta = client.get("/api/meta?seed=antony")
+        assert resp_meta.status_code == 200
+        meta = resp_meta.json()
+        assert "Antony" in meta["origin_address"] or "renaissance" in meta["origin_address"].lower()
+        assert meta["active_seed"] == "antony"
+
+        # Grid and isochrones for Antony
+        g_resp = client.get("/api/grid/transit?seed=antony")
+        assert g_resp.status_code == 200
+        grid = g_resp.json()
+        assert grid["seed"] == "antony"
+        assert grid["rows"] == 200 and grid["cols"] == 200
+
+        iso_resp = client.get("/api/isochrones/transit?seed=antony")
+        assert iso_resp.status_code == 200
+        assert iso_resp.json()["type"] == "FeatureCollection"
+
+        # Query origin in Antony: 8 rue de la renaissance (48.760967, 2.299217)
+        q_antony = client.get("/api/query?lat=48.760967&lon=2.299217&seed=antony")
+        assert q_antony.status_code == 200
+        a_data = q_antony.json()
+        assert a_data["seed"] == "antony"
+        assert a_data["walk_min"] < 1.5
+        assert a_data["transit_min"] < 1.5
+        assert a_data["distance_from_origin_km"] < 0.1
+
+        # Travel from Antony to central Paris (Châtelet via RER B)
+        q_chatelet = client.get("/api/query?lat=48.8584&lon=2.3470&seed=antony")
+        assert q_chatelet.status_code == 200
+        c_data = q_chatelet.json()
+        assert 18.0 <= c_data["transit_min"] <= 45.0, (
+            f"Antony -> Chatelet transit time {c_data['transit_min']} outside [18, 45] min"
+        )
+        assert c_data["optimal_exit_station"] is not None
+
+        # Travel in expanded south corridor: Massy-Palaiseau (~5 km from Antony)
+        q_massy = client.get("/api/query?lat=48.7252&lon=2.2605&seed=antony")
+        assert q_massy.status_code == 200
+        m_data = q_massy.json()
+        assert m_data["transit_min"] < 35.0
+        assert m_data["bike_min"] < 30.0
 
 
 def test_frontend_xss_and_csp_hygiene():
